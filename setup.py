@@ -17,10 +17,31 @@ import wandb
 from pytorch_lightning.loggers import WandbLogger
 
 import os
+from sklearn.metrics import f1_score
 
-# Save Wandb key as env variable
+# Get OS Env Variables
 wandb_key = os.getenv("WANDB_API_KEY")
+path = os.getenv("SAVE_PATH")
 
+if os.getenv("LR"):
+    lr = float(os.getenv("LR"))
+else:
+    print("No learning Rate was given, using default 8.607559313717729e-05")
+    lr = 8.607559313717729e-05
+
+if os.getenv("WARMUP_STEPS"):
+    warmup_steps = int(os.getenv("WARMUP_STEPS"))
+else:
+    print("No Warmup steps were given, using default 50")
+    warmup_steps = 50
+
+if os.getenv("DECAY"):
+    decay = float(os.getenv("DECAY"))
+else:
+    print("No weight decay was given, using default 6.202247374050644e-05")
+    decay = 6.202247374050644e-05
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class GLUEDataModule(L.LightningDataModule):
@@ -99,19 +120,19 @@ class GLUEDataModule(L.LightningDataModule):
         AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
 
     def train_dataloader(self):
-        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True)
+        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=15)
 
     def val_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size)
+            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=15)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=15) for x in self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=15)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=15) for x in self.eval_splits]
 
     def convert_to_features(self, example_batch, indices=None):
         # Either encode single sentence or sentence pairs
@@ -122,7 +143,7 @@ class GLUEDataModule(L.LightningDataModule):
 
         # Tokenize the text/text pairs
         features = self.tokenizer.batch_encode_plus(
-            texts_or_text_pairs, max_length=self.max_seq_length, pad_to_max_length=True, truncation=True
+            texts_or_text_pairs, max_length=self.max_seq_length, padding="max_length", truncation=True
         )
 
         # Rename label to labels to make it easier to pass to model forward
@@ -183,6 +204,12 @@ class GLUETransformer(L.LightningModule):
         preds = torch.cat([x["preds"] for x in self.validation_step_outputs]).detach().cpu().numpy()
         labels = torch.cat([x["labels"] for x in self.validation_step_outputs]).detach().cpu().numpy()
         loss = torch.stack([x["loss"] for x in self.validation_step_outputs]).mean()
+
+        f1 = f1_score(labels, preds)
+        accuracy = (preds == labels).mean()
+
+        self.log('accuracy', accuracy, prog_bar=True)
+        self.log('f1', f1, prog_bar=True)
         self.log("val_loss", loss, prog_bar=True)
         # This causes recursion Error somehow:
         # self.log_dict(self.metric.compute(predictions=preds, references=labels), prog_bar=True)
@@ -212,11 +239,6 @@ class GLUETransformer(L.LightningModule):
         scheduler = {"scheduler": scheduler, "interval": "step", "frequency": 1}
         return [optimizer], [scheduler]
 
-
-# Add time to name of run (for once dont use hyperparameters as they don't change)
-current_time = datetime.now()
-formatted_time = current_time.strftime("%d.%m.%Y %H:%M")
-
 if wandb_key:
     wandb.login(key=wandb_key)
 else:
@@ -224,7 +246,7 @@ else:
     print("You can pass it like the following:")
     print("""docker run -e WANDB_API_KEY="your_wandb_api_key" mlops_proj2""")
 
-wandb.init(project="MLOPS Project 2 DWal", name="Run " + formatted_time)
+wandb.init(project="MLOPS Project 2 DWal", name="Run LR: " + str(lr) + " Decay: " + str(decay) + " Warmup: " + str(warmup_steps))
 
 epochs = 3  # do not change this
 logger = WandbLogger()
@@ -241,9 +263,9 @@ model = GLUETransformer(
     num_labels=dm.num_labels,
     eval_splits=dm.eval_splits,
     task_name=dm.task_name,
-    learning_rate=8.607559313717729e-05,
-    weight_decay=6.202247374050644e-05,
-    warmup_steps=50,
+    learning_rate=lr,
+    weight_decay=decay,
+    warmup_steps=warmup_steps,
 )
 
 trainer = L.Trainer(
@@ -253,5 +275,9 @@ trainer = L.Trainer(
     logger=logger,
 )
 trainer.fit(model, datamodule=dm)
+
+# Save the full model:
+if path:
+    torch.save(model, path)
 
 wandb.finish()
