@@ -120,19 +120,19 @@ class GLUEDataModule(L.LightningDataModule):
         AutoTokenizer.from_pretrained(self.model_name_or_path, use_fast=True)
 
     def train_dataloader(self):
-        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True, num_workers=15)
+        return DataLoader(self.dataset["train"], batch_size=self.train_batch_size, shuffle=True)
 
     def val_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size, num_workers=15)
+            return DataLoader(self.dataset["validation"], batch_size=self.eval_batch_size)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=15) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size) for x in self.eval_splits]
 
     def test_dataloader(self):
         if len(self.eval_splits) == 1:
-            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size, num_workers=15)
+            return DataLoader(self.dataset["test"], batch_size=self.eval_batch_size)
         elif len(self.eval_splits) > 1:
-            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size, num_workers=15) for x in self.eval_splits]
+            return [DataLoader(self.dataset[x], batch_size=self.eval_batch_size) for x in self.eval_splits]
 
     def convert_to_features(self, example_batch, indices=None):
         # Either encode single sentence or sentence pairs
